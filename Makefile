@@ -1,5 +1,5 @@
 lint:
-	flake8 django_twilio --exclude=migrations
+	flake8 django_twilio --exclude=migrations,south_migrations
 
 test:
 	python manage.py test
