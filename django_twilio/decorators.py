@@ -6,12 +6,15 @@ Useful decorators.
 """
 
 import sys
+import inspect
 from functools import wraps
 
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import View
 from django.http import (
     HttpRequest, HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed)
+from django.utils.decorators import method_decorator
 
 from twilio.twiml import Verb
 from twilio.util import RequestValidator
@@ -27,7 +30,7 @@ else:
     text_type = unicode
 
 
-def twilio_view(f):
+def twilio_view(thing):
     """
     This decorator provides several helpful shortcuts for writing Twilio views.
 
@@ -62,16 +65,32 @@ def twilio_view(f):
             r.message('Thanks for the SMS message!')
             return r
     """
+
+    # Decorate class-based views
+    if isinstance(thing, type) and issubclass(thing, View):
+        _twilio_method_decorator = method_decorator(_twilio_function_view)
+        thing.dispatch = _twilio_method_decorator(thing.dispatch)
+        decorated_thing = thing
+
+    # Decorate methods of class-based views
+    elif inspect.ismethod(thing):
+        _twilio_method_decorator = method_decorator(_twilio_function_view)
+        decorated_thing = _twilio_method_decorator(thing)
+
+    # Decorate function views
+    else:
+        decorated_thing = _twilio_function_view(thing)
+
+    return decorated_thing
+
+
+def _twilio_function_view(f):
+
     @csrf_exempt
     @wraps(f)
-    def decorator(request_or_self, *args, **kwargs):
+    def decorated_view(request, *args, **kwargs):
 
-        class_based_view = not isinstance(request_or_self, HttpRequest)
-        if not class_based_view:
-            request = request_or_self
-        else:
-            assert len(args) >= 1
-            request = args[0]
+        assert isinstance(request, HttpRequest)
 
         # Turn off Twilio authentication when explicitly requested, or
         # in debug mode. Otherwise things do not work properly. For
@@ -97,7 +116,7 @@ def twilio_view(f):
             if request.method == 'POST':
                 if not validator.validate(url, request.POST, signature):
                     return HttpResponseForbidden()
-            if request.method == 'GET':
+            elif request.method == 'GET':
                 if not validator.validate(url, request.GET, signature):
                     return HttpResponseForbidden()
 
@@ -112,7 +131,7 @@ def twilio_view(f):
             if blacklisted_resp:
                 return blacklisted_resp
 
-        response = f(request_or_self, *args, **kwargs)
+        response = f(request, *args, **kwargs)
 
         if isinstance(response, (text_type, bytes)):
             return HttpResponse(response, content_type='application/xml')
@@ -120,4 +139,5 @@ def twilio_view(f):
             return HttpResponse(str(response), content_type='application/xml')
         else:
             return response
-    return decorator
+
+    return decorated_view
